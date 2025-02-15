@@ -3,6 +3,7 @@
 ## Setup
 ```bash
 conda create -n heartbeat python=3.10
+conda activate heartbeat
 pip install -e .
 ```
 

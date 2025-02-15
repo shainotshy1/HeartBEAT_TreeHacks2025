@@ -1,5 +1,6 @@
 from enum import Enum
 import time
+from playsound import playsound
 
 class Note(Enum):
     THIRTYSECOND = 1
@@ -31,28 +32,33 @@ class BPM_Child():
         raise NotImplemented
 
 class Sample():
-    def __init__(self, sample, length, label):
+    def __init__(self, length, label):
         assert type(length) is Note
-        assert label != "EMPTY", "EMPTY label is reserved, use another label"
-        self.sample = sample
         self.length = length
         self.label = label
 
     def play(self):
         # Make play the audio and return after the length has completed
-        #if self.sample is not None:
         print(f"Playing {self.label}")
 
     def empty_sample(length):
-        return Sample(None, length, "EMPTY")
+        return Sample(length, "<EMPTY>")
+
+class WavSample(Sample):
+    def __init__(self, length, label, wav_fn):
+        super().__init__(length, label)
+        self.wav_fn = wav_fn
+
+    def play(self):
+        playsound(self.wav_fn)
 
 class BPM_Manager():
     def __init__(self, bpm, metronome_sample = None, beat_note = Note.QUARTER, base_unit = Note.THIRTYSECOND):
         assert type(bpm) is int
         assert type(beat_note) is Note
         assert bpm > 0
-        assert note_to_count(beat_note) <= note_to_count(base_unit)
-        assert metronome_sample is None or type(metronome_sample) is Sample
+        assert note_to_count[beat_note] <= note_to_count[base_unit]
+        assert metronome_sample is None or isinstance(metronome_sample, Sample)
         self.bpm = bpm
         self.metronome_sample = metronome_sample
         self.beat_note = beat_note
@@ -60,19 +66,19 @@ class BPM_Manager():
         self.children = []
 
     def add_child(self, child):
-        assert type(child) is BPM_Child
+        assert isinstance(child, BPM_Child)
         self.children.append(child)
 
     def remove_child(self, child):
         self.children.remove(child)
 
     def play(self):
-        sample_interval = note_to_count(self.base_unit) / note_to_count(self.beat_note)
+        sample_interval = note_to_count[self.base_unit] / note_to_count[self.beat_note]
         total_beats = self.bpm * sample_interval
         beat_interval = 60 / total_beats
         curr = 0
-        for i in range(5):
-            if curr == 0:
+        while True:
+            if self.metronome_sample is not None and curr == 0:
                 self.metronome_sample.play()
             curr = (curr + 1) % sample_interval
             time.sleep(beat_interval)
@@ -92,11 +98,11 @@ class SampleLibrary():
 class BeatBar(BPM_Child):
     # Example: 6/8 with base_time 1/16 => bar = [len = 6 * 16 / 8] = [12 sixteenth notes per bar]
     def __init__(self, time_signature, base_time):
-        n = self.get_total_time_units(base_time)
-        self.bar = [Sample.empty_sample() for _ in range(n)]
         self.base_time = base_time
         self.time_signature = time_signature
         self.curr = 0
+        n = self.get_total_time_units(base_time)
+        self.bar = [Sample.empty_sample(base_time) for _ in range(n)]
     
     def set_count_sample(self, count, sample):
         assert 0 <= count < len(self.bar)
@@ -119,7 +125,7 @@ class BeatBar(BPM_Child):
         a, b = self.time_signature.a, self.time_signature.b
         assert type(unit) is Note
         count = note_to_count[unit]
-        assert count <= b
+        assert count >= b
         return a * count // b
 
 class BeatLayer(BPM_Child):
@@ -148,8 +154,8 @@ class Beat(BPM_Child):
         assert all(type(l) is BeatLayer for l in layers)
         base_time = layers[0].base_time
         assert all(l.base_time == base_time for l in layers)
-        total_time = layers[0].get_total_time_units()
-        assert all(l.get_total_time_units() == total_time for l in layers)
+        total_time = layers[0].get_total_time_units(base_time)
+        assert all(l.get_total_time_units(base_time) == total_time for l in layers)
         self.layers = layers
         self.base_time = base_time
 

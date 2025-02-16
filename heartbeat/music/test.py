@@ -26,8 +26,8 @@ _display_surf = pygame.display.set_mode(size, pygame.HWSURFACE | pygame.DOUBLEBU
 
 notes = []
 
-from heartbeat.heartbeat_sensor.heartbeat_sensors import ArduinoHeartbeatSensor
-hs = ArduinoHeartbeatSensor(serial_port='/dev/cu.usbmodem1201', baud_rate=9600)
+# from heartbeat.heartbeat_sensor.heartbeat_sensors import ArduinoHeartbeatSensor
+# hs = ArduinoHeartbeatSensor(serial_port='/dev/cu.usbmodem1201', baud_rate=9600)
 
 import time
 time.sleep(1) 
@@ -144,6 +144,9 @@ for frequency, duration in tqdm.tqdm(notes):
     sound = fm_synthesis(frequency, duration)
     sound.play()
     pygame.time.delay(int(duration * 1000))  # Delay for the duration of the note
+
+# save sounds to mp3 file
+# pygame.mixer.music.save('sounds.mp3')
 
 # # Keep the window open until it is closed
 # _running = True

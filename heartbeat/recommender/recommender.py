@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 from typing import List, Dict
 import requests
 from requests.exceptions import HTTPError
+from transformers import AutoTokenizer, AutoModelForCausalLM
+import torch
 
 from heartbeat.heartbeat_sensor.emotion import all_emotion_str
 
@@ -16,15 +18,33 @@ np.random.seed(42)
 
 load_dotenv()
 
+# OpenAI configuration
 openai_api_key = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI()
 
+# Groq configuration
 groq_api_key = os.getenv("GROQ_API_KEY")
 groq_api_url = 'https://api.groq.com/openai/v1/chat/completions'
 groq_api_headers = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {groq_api_key}",
 }
+
+# HuggingFace configuration
+hf_model_name = "microsoft/phi-2"  # Smaller, faster model
+hf_token = os.getenv("HUGGINGFACE_TOKEN")
+if hf_token is None:
+    raise ValueError("HUGGINGFACE_TOKEN environment variable not set")
+
+# Initialize HuggingFace model and tokenizer
+tokenizer = AutoTokenizer.from_pretrained(hf_model_name, token=hf_token, trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained(
+    hf_model_name, 
+    token=hf_token,
+    torch_dtype=torch.float16,
+    device_map="auto",
+    trust_remote_code=True
+)
 
 temperature = 0.2
 
@@ -71,8 +91,7 @@ def get_pattern_prompt(
     prev_layers_so_far: List[str]
 ):
     all_patterns = sample_list(all_patterns)
-    recent_patterns = curr_layer_patterns_so_far#[-5:]
-    #patterns = [*all_patterns, *recent_patterns]
+    recent_patterns = curr_layer_patterns_so_far
     patterns_concat_str = ', '.join(all_patterns)
     return f"Given that the emotion is {emotion}, and that we used the following recent patterns: [{recent_patterns}], and that the following progress towards track layers has already been done: [{prev_layers_so_far}], guess the best-matching drum pattern out of the following list. {get_expected_format_prompt()} \n{patterns_concat_str}"
 
@@ -83,76 +102,9 @@ def get_track_prompt(
     prev_layers_so_far: List[str]
 ):
     all_tracks = sample_list(all_tracks)
-    recent_tracks = curr_layer_samples_so_far#[-5:]
-    #tracks = [*all_tracks, *recent_tracks]
+    recent_tracks = curr_layer_samples_so_far
     tracks_concat_str = '\n'.join(all_tracks)
     return f"Given that the emotion is {emotion}, and that we used the following recent tracks: [{recent_tracks}], and that the following progress towards track layers has already been done: [{prev_layers_so_far}], guess the best-matching drum sample out of the following list. {get_expected_format_prompt()} \n{tracks_concat_str}"
-
-
-def query_openai_old(emotion: str, 
-                 time_signature,
-                 curr_layer_patterns_so_far: List[str],
-                 curr_layer_samples_so_far: List[str],
-                 prev_layers_so_far: List[str],
-                 verbose=False):
-    """
-    Emotion -> pattern, sample
-    Each query takes ~1 second (depends on query length ofc)
-    """
-    raise NotImplementedError("Only groq is done")
-    
-    if openai_api_key is None:
-        raise ValueError("OPENAI_API_KEY environment variable not set")
-    
-    get_content = lambda completion: completion.choices[0].message.content
-    extract_answer = lambda content: content.split('\n')[-1]
-    
-    system_prompt = {"role": "system", "content": get_system_prompt()}
-    pattern_prompt = {"role": "user", "content": get_pattern_prompt(emotion, patterns)}
-    # synth_prompt = {"role": "user", "content": f"Given that the emotion is {emotion}, guess the best-matching synth pattern out of the following list. \n{', '.join(synth_patterns)}"}
-    track_group_prompt = {"role": "user", "content": get_track_group_prompt(emotion, track_groups)}
-    
-    t0 = time.time()
-    pattern_completion = get_content(openai_client.chat.completions.create(model="gpt-4o-mini", store=True, messages=[system_prompt, pattern_prompt], temperature=temperature))
-    pattern = extract_answer(pattern_completion)
-    t1 = time.time()
-    if verbose:
-        print('Drum pattern prompt:', pattern_prompt['content'])
-        print()
-        print('Drum pattern response:', pattern_completion)
-        print('Time (s):', t1 - t0)
-        print()
-    
-    t0 = time.time()
-    track_group_completion = get_content(openai_client.chat.completions.create(model="gpt-4o-mini", store=True, messages=[system_prompt, track_group_prompt], temperature=temperature))
-    track_group = extract_answer(track_group_completion)
-    t1 = time.time()
-    if verbose:
-        print('Drum sample class prompt:', track_group_prompt['content'])
-        print()
-        print('Drum sample class response:', track_group_completion)
-        print('Time (s):', t1 - t0)
-        print()
-    
-    t0 = time.time()
-    sample_filenames = get_samples_filenames(samples_data, track_group)
-    sample_filename_prompt = {"role": "user", "content": get_sample_filename_prompt(emotion, track_group, sample_filenames)}
-    sample_filename_completion = get_content(openai_client.chat.completions.create(model="gpt-4o-mini", store=True, messages=[system_prompt, sample_filename_prompt], temperature=temperature))
-    sample_filename = extract_answer(sample_filename_completion)
-    t1 = time.time()
-    if verbose:
-        print('Drum sample filename prompt:', sample_filename_prompt['content'])
-        print()
-        print('Drum sample filename response:', sample_filename_completion)
-        print('Time (s):', t1 - t0)
-        print()
-    
-    return {
-        'pattern': pattern,
-        'track_group': track_group,
-        'sample_filename': sample_filename
-    }
-    
 
 def query_openai(
     all_patterns: List[str],
@@ -168,8 +120,8 @@ def query_openai(
     Emotion -> pattern, sample
     Each query takes ~0.6 seconds
     """
-    if groq_api_key is None:
-        raise ValueError("GROQ_API_KEY environment variable not set")
+    if openai_api_key is None:
+        raise ValueError("OPENAI_API_KEY environment variable not set")
         
     def sample_openai(system_prompt, user_prompt):
         system_prompt = {"role": "system", "content": system_prompt}
@@ -188,7 +140,6 @@ def query_openai(
     
     t0 = time.time()
     pattern_completion = sample_openai(system_prompt, pattern_prompt)
-
     pattern = extract_answer(pattern_completion)
     t1 = time.time()
     if verbose:
@@ -210,7 +161,6 @@ def query_openai(
         print()
         
     return pattern, track
-
 
 def query_groq(
     all_patterns: List[str],
@@ -263,7 +213,6 @@ def query_groq(
     
     t0 = time.time()
     pattern_completion = sample_groq(system_prompt, pattern_prompt)
-
     pattern = extract_answer(pattern_completion)
     t1 = time.time()
     if verbose:
@@ -285,14 +234,90 @@ def query_groq(
         print()
         
     return pattern, track
+
+def query_hf(
+    all_patterns: List[str],
+    all_tracks: Dict[str, List[str]],
+    time_signature,  # unused
+    curr_layer_patterns_so_far: List[str],
+    curr_layer_samples_so_far: List[str],
+    prev_layers_so_far: List[str],
+    emotion: str,
+    verbose=True
+):
+    """
+    Emotion -> pattern, sample using Hugging Face model
+    Each query processes patterns and tracks based on emotion and context
+    """
+    def sample_hf(system_prompt, user_prompt):
+        # Adjust prompt format for phi-2
+        prompt = f"Instruct: {system_prompt}\n\n{user_prompt}\n\nAssistant:"
+        
+        inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=100,
+            temperature=temperature,
+            pad_token_id=tokenizer.eos_token_id
+        )
+        response = tokenizer.decode(outputs[0], skip_special_tokens=True)
+        # Extract the response after the prompt
+        response = response.split("Assistant:")[-1].strip()
+        return response
+
+    extract_answer = lambda content: content.split('\n')[-1]
     
+    system_prompt = get_system_prompt()
+    pattern_prompt = get_pattern_prompt(emotion, all_patterns, curr_layer_patterns_so_far, prev_layers_so_far)
+    track_prompt = get_track_prompt(emotion, all_tracks, curr_layer_samples_so_far, prev_layers_so_far)
+    
+    t0 = time.time()
+    pattern_completion = sample_hf(system_prompt, pattern_prompt)
+    pattern = extract_answer(pattern_completion)
+    t1 = time.time()
+    if verbose:
+        print('Pattern prompt:', pattern_prompt)
+        print()
+        print('Pattern response:', pattern_completion)
+        print('Time (s):', t1 - t0)
+        print()
+    
+    t0 = time.time()
+    track_completion = sample_hf(system_prompt, track_prompt)
+    track = extract_answer(track_completion)
+    t1 = time.time()
+    if verbose:
+        print('Sample prompt:', track_prompt)
+        print()
+        print('Sample response:', track_completion)
+        print('Time (s):', t1 - t0)
+        print()
+        
+    return pattern, track
 
 if __name__ == "__main__":
-    raise NotImplementedError
-    # patterns, synth_patterns = get_patterns()
-    # track_groups = get_track_groups()
-    # samples_data = get_samples_data()
-    # random_emotion = np.random.choice(all_emotion_str)
-    # print(f'Emotion: {random_emotion}')
-    # # print(query_openai(random_emotion, patterns, synth_patterns, track_groups, samples_data, verbose=True))
-    # print(query_groq(random_emotion, patterns, synth_patterns, track_groups, samples_data, verbose=True))
+    # Test all three model implementations
+    patterns, synth_patterns = get_patterns()
+    track_groups = get_track_groups()
+    random_emotion = np.random.choice(all_emotion_str)
+    print(f'Emotion: {random_emotion}')
+    
+    # Test each model
+    for query_func in [query_openai, query_groq, query_hf]:
+        print(f"\nTesting {query_func.__name__}:")
+        try:
+            pattern, track = query_func(
+                all_patterns=patterns,
+                all_tracks=track_groups,
+                time_signature=None,
+                curr_layer_patterns_so_far=[],
+                curr_layer_samples_so_far=[],
+                prev_layers_so_far=[],
+                emotion=random_emotion,
+                verbose=True
+            )
+            print(f"Results from {query_func.__name__}:")
+            print(f"Pattern: {pattern}")
+            print(f"Track: {track}")
+        except Exception as e:
+            print(f"Error running {query_func.__name__}: {str(e)}")

@@ -1,7 +1,7 @@
 from enum import Enum
 import threading
 import pygame
-from utils import keep_last_folders
+from heartbeat.beat_construction.utils import keep_last_folders
 
 class Note(Enum):
     THIRTYSECOND = 1

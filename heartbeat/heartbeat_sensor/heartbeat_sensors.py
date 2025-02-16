@@ -4,341 +4,215 @@ import serial
 import time
 import math
 import random
-from typing import List
-
+from typing import List, Tuple, Dict
 import numpy as np
-import heartpy as hp  # Import heartpy
+import heartpy as hp
+from heartbeat.heartbeat_sensor.emotion import Emotion
 
 class HeartbeatSensor(ABC):
     """Abstract base class for heartbeat sensors."""
 
-    def __init__(self, sampling_rate: int = 100):
-        self.sampling_rate = sampling_rate
-        self.current_bpm = 0.0
-        self.signal_buffer: List[float] = []
-        self.ibi_buffer: List[float] = []  # Inter-beat interval buffer
-        self.last_peak_time: float = None  # Keep track of the last peak time
-        self.buffer_size = sampling_rate * 5  # Store 5 seconds of data
+    def __init__(self, buffer_size: int = 1000):
+        self.buffer_size = buffer_size   # base agg stats off the last n data points
+        self.signal_buffer = []
+        self.working_data = None
+        self.measures = None
 
     @abstractmethod
-    def read_signal(self) -> float:
-        """Read and return the latest heartbeat signal."""
+    def read_signal(self) -> Tuple[np.str_, float] | None:
+        """Read and return the latest heartbeat signal and timestamp."""
         pass
+    
+    def process(self, signal=None, timestamps=None, timing=False):
+        if signal is None:
+            signal = self.signal_values
+            timestamps = self.timestamps
+        signal = np.array(signal)
+        timestamps = np.array(timestamps)
+        sample_rate = hp.get_samplerate_datetime(timestamps, timeformat='%Y-%m-%d %H:%M:%S.%f')
+        t0 = time.time()
+        self.working_data, self.measures = hp.process(signal, sample_rate, report_time = True)
+        t1 = time.time()
+        if timing:
+            print(f"Processing took {t1-t0} seconds")
+        
+    def add_to_buffer(self, signal, time):
+        if len(self.signal_buffer) >= self.buffer_size:
+            self.signal_buffer.pop(0)
+        self.signal_buffer.append((signal, time))
 
-    def calculate_bpm(self) -> float:
-        """Calculate BPM from the signal buffer using peak detection."""
-        if len(self.signal_buffer) < self.sampling_rate:
-            return self.current_bpm
-
-        # Simple peak detection
-        peaks = []
-        for i in range(1, len(self.signal_buffer) - 1):
-            if (
-                self.signal_buffer[i] > self.signal_buffer[i - 1]
-                and self.signal_buffer[i] > self.signal_buffer[i + 1]
-            ):
-                peaks.append(i)
-
-        if len(peaks) < 2:
-            return self.current_bpm
-
-        # Calculate average time between peaks
-        peak_intervals = np.diff(peaks)
-        avg_interval = np.mean(peak_intervals)
-
-        # Convert to BPM
-        if avg_interval > 0:
-            self.current_bpm = 60.0 * self.sampling_rate / avg_interval
-            return self.current_bpm
-
-        # Update IBI Buffer
-        current_time = time.time()
-        if self.last_peak_time is not None:
-            ibi = current_time - self.last_peak_time
-            self.ibi_buffer.append(ibi)
-            if len(self.ibi_buffer) > self.sampling_rate * 5:
-                self.ibi_buffer.pop(0)  # Keep buffer size consistent
-        self.last_peak_time = current_time  # Update last peak time
-
-        return self.current_bpm
-
-    def determine_emotion(self, hrv_features):
+    def determine_emotion(self):
         """
         Determine emotion based on HRV features using research-based thresholds.
-        References:
-        - Task Force of The European Society of Cardiology, 1996
-        - Kim et al., 2018 (Emotion Classification Using HRV Parameters)
-        - Shaffer & Ginsberg, 2017 (HRV Metrics and Norms)
         """
-        rmssd = hrv_features.get('rmssd', 0)  # ms
-        sdnn = hrv_features.get('sdnn', 0)    # ms
+        if self.measures is None:
+            return None
+        bpm = self.measures['bpm']
+        rmssd = self.measures['rmssd']
+        sdnn = self.measures['sdnn']
+        pnn50 = self.measures['pnn50']
+        sd1 = self.measures['sd1']
+        sd2 = self.measures['sd2']
+        breathing_rate = self.measures['breathingrate']
         
-        # Get additional HRV features if available
-        hr = hrv_features.get('bpm', 70)      # beats per minute
+        # Normalize parameters based on individual baseline
+        # (These should be collected during a neutral state)
+        baseline_bpm = 70  # Example baseline, should be personalized
+        baseline_rmssd = 27.0
+        baseline_sdnn = 50.0
+        baseline_pnn50 = 10.0
+        baseline_sd1 = 30.0
+        baseline_sd2 = 70.0
+        baseline_breathing_rate = 15.0
         
-        # Normalize RMSSD and SDNN based on individual baseline
-        # (typically collected during neutral state)
-        baseline_rmssd = 27.0  # Typical baseline for healthy adults
-        baseline_sdnn = 50.0   # Typical baseline for healthy adults
-        
+        rel_bpm = bpm / baseline_bpm
         rel_rmssd = rmssd / baseline_rmssd
         rel_sdnn = sdnn / baseline_sdnn
+        rel_pnn50 = pnn50 / baseline_pnn50
+        rel_sd1 = sd1 / baseline_sd1
+        rel_sd2 = sd2 / baseline_sd2
+        rel_breathing_rate = breathing_rate / baseline_breathing_rate
         
         # Define emotional state thresholds
-        if hr > 100 and rmssd < 20 and sdnn < 30:
-            return "High Stress/Fear"
-        elif hr > 90 and rmssd < 25 and sdnn < 40:
-            return "Anxious"
-        elif (rel_rmssd > 1.2 and rel_sdnn > 1.2) and (hr < 75):
-            if rel_rmssd > 1.5 and rel_sdnn > 1.5:
-                return "Deep Relaxation"
-            return "Calm"
-        elif (rel_rmssd > 1.1 and rel_sdnn > 1.1) and (75 <= hr <= 85):
-            return "Happy/Excited"
-        elif (0.8 <= rel_rmssd <= 1.2) and (0.8 <= rel_sdnn <= 1.2):
-            if 65 <= hr <= 75:
-                return "Neutral"
-            elif hr > 75:
-                return "Mild Arousal"
+        if rel_bpm > 1.3 and rel_rmssd < 0.7 and rel_sdnn < 0.7 and rel_pnn50 < 0.7 and rel_breathing_rate > 1.2:
+            return Emotion.HIGH_STRESS_FEAR
+        elif rel_bpm > 1.2 and rel_rmssd < 0.8 and rel_sdnn < 0.8 and rel_pnn50 < 0.8 and rel_breathing_rate > 1.1:
+            return Emotion.ANXIOUS
+        elif (rel_rmssd > 1.2 and rel_sdnn > 1.2 and rel_pnn50 > 1.2) and (rel_bpm < 0.9) and (rel_breathing_rate < 0.9):
+            if rel_rmssd > 1.5 and rel_sdnn > 1.5 and rel_pnn50 > 1.5:
+                return Emotion.DEEP_RELAXATION
+            return Emotion.CALM
+        elif (rel_rmssd > 1.1 and rel_sdnn > 1.1 and rel_pnn50 > 1.1) and (1.0 <= rel_bpm <= 1.2):
+            return Emotion.HAPPY_EXCITED
+        elif (0.9 <= rel_rmssd <= 1.1) and (0.9 <= rel_sdnn <= 1.1) and (0.9 <= rel_pnn50 <= 1.1):
+            if 0.95 <= rel_bpm <= 1.05:
+                return Emotion.NEUTRAL
+            elif rel_bpm > 1.05:
+                return Emotion.MILD_AROUSAL
             else:
-                return "Mild Relaxation"
-        elif rmssd < (0.8 * baseline_rmssd) and sdnn < (0.8 * baseline_sdnn):
-            if hr > 80:
-                return "Mild Stress"
+                return Emotion.MILD_RELAXATION
+        elif rel_rmssd < 0.9 and rel_sdnn < 0.9 and rel_pnn50 < 0.9:
+            if rel_bpm > 1.1:
+                return Emotion.MILD_STRESS
             else:
-                return "Focus/Concentration"
+                return Emotion.FOCUS_CONCENTRATION
         
-        # Calculate complexity score for mixed emotional states
-        complexity = abs((rel_rmssd - 1.0) * (rel_sdnn - 1.0))
-        if complexity > 0.3:
-            return "Mixed Emotional State"
-            
-        return "Neutral"
+        # Use SD1/SD2 ratio for additional insight
+        sd1_sd2_ratio = sd1 / sd2
+        baseline_sd1_sd2_ratio = baseline_sd1 / baseline_sd2
+        rel_sd1_sd2_ratio = sd1_sd2_ratio / baseline_sd1_sd2_ratio
+        
+        if rel_sd1_sd2_ratio > 1.2:
+            return Emotion.INCREASED_PARASYMPATHETIC_ACTIVITY
+        elif rel_sd1_sd2_ratio < 0.8:
+            return Emotion.INCREASED_SYMPATHETIC_ACTIVITY
+        
+        return Emotion.MIXED_EMOTIONAL_STATE
 
-
-    def analyze_hrv(self, rr_intervals):
-        try:
-            # Add debug print
-            print(f"RR intervals received: {rr_intervals}")
-            
-            # Check for valid data - fixed condition
-            if rr_intervals is None or len(rr_intervals) < 2:
-                print("Insufficient RR interval data")
-                return "Stressed"  # Default to stressed when data is insufficient
-                
-            # Calculate HRV features
-            rr_diffs = np.diff(rr_intervals)
-            rmssd = np.sqrt(np.mean(np.square(rr_diffs)))
-            sdnn = np.std(rr_intervals)
-            
-            print(f"Calculated RMSSD: {rmssd}, SDNN: {sdnn}")  # Debug print
-            
-            hrv_features = {
-                'rmssd': rmssd,
-                'sdnn': sdnn
-            }
-            
-            emotion = self.determine_emotion(hrv_features)
-            return emotion
-        except Exception as e:
-            print(f"Error in analyze_hrv: {str(e)}")
-            return "Stressed"  # Default to stressed when there's an error
-
-    def process_data(self, data):
-        try:
-            # Basic data validation
-            print(f"Data length: {len(data)}")
-            print(f"Data range: min={min(data)}, max={max(data)}")
-            print(f"Sample rate being used: {self.sampling_rate} Hz")
-            
-            # Check if we have enough data
-            min_required_duration = 10  # seconds
-            min_required_samples = min_required_duration * self.sampling_rate
-            if len(data) < min_required_samples:
-                print(f"Warning: Data length ({len(data)}) is less than minimum required ({min_required_samples})")
-            
-            # Check for signal quality
-            signal_range = max(data) - min(data)
-            if signal_range < 100:  # Arbitrary threshold, adjust based on your sensor
-                print(f"Warning: Low signal variation ({signal_range})")
-            
-            # Process with more detailed error handling
-            data = np.array(data, dtype='float32')
-            filtered = hp.filter_signal(data, 
-                                      cutoff=[0.75, 3.5],
-                                      sample_rate=self.sampling_rate, 
-                                      order=2,
-                                      filtertype='bandpass')
-            
-            try:
-                wd, m = hp.process(filtered, 
-                                 sample_rate=self.sampling_rate,
-                                 high_precision=True,
-                                 clean_rr=True)
-                print("HeartPy processing completed successfully")
-            except Exception as hp_error:
-                print(f"HeartPy processing error: {str(hp_error)}")
-                m = {}
-            
-            if not m:
-                print("HeartPy analysis produced no measures")
-                return {
-                    "bpm": np.mean(60 / np.diff(self.ibi_buffer)) if hasattr(self, 'ibi_buffer') else 0,
-                    "ibi_buffer": self.ibi_buffer if hasattr(self, 'ibi_buffer') else [],
-                    "emotion": self.analyze_hrv(self.ibi_buffer) if hasattr(self, 'ibi_buffer') else "Unknown",
-                    "signal_quality_warning": "Low signal quality or insufficient data"
-                }
-            
-            print(f"HeartPy measures: {m}")
-            return m
-        except Exception as e:
-            print(f"Error in process_data: {str(e)}")
-            return {}
+    @property
+    def signal_values(self):
+        return [signal for signal, _ in self.signal_buffer]
+    
+    @property
+    def timestamps(self):
+        return [timestamp for _, timestamp in self.signal_buffer]
 
 
 class ArduinoHeartbeatSensor(HeartbeatSensor):
     """Reads real heartbeat data from an Arduino device."""
 
     def __init__(
-        self, serial_port: str, baud_rate: int = 115200, sampling_rate: int = 100
+        self, serial_port: str, baud_rate: int = 115200, buffer_size: int = 1000, num_steps: int = 1000, warmup_steps: int = 1000
     ):
-        super().__init__(sampling_rate)
+        super().__init__(buffer_size)
+        self.num_steps = num_steps
         self.serial_port = serial_port
-        self.serial = serial.Serial(serial_port, baud_rate)
+        self.arduino = serial.Serial(serial_port, baud_rate, timeout=1)
         time.sleep(2)  # Wait for Arduino to reset
 
-    def read_signal(self) -> float:
-        """Read and parse serial data from Arduino."""
-        try:
-            if self.serial.in_waiting:
-                line = self.serial.readline().decode("utf-8").strip()
-                if line.startswith("Signal:"):
-                    signal = float(line.split(":")[1])
-                    self.signal_buffer.append(signal)
-                    if len(self.signal_buffer) > self.buffer_size:
-                        self.signal_buffer.pop(0)
-                    return signal
-                elif line.startswith("BPM:"):
-                    self.current_bpm = float(line.split(":")[1])
-                    return 0.0
-        except Exception as e:
-            print(f"Error reading from Arduino: {e}")
-            return 0.0
+    def read_signal(self) -> Tuple[np.str_, float] | None:
+        """
+        Read and parse serial data from Arduino.
+        """
+        # data_points = []
+        import tqdm
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        x = []
+        y = []
+        ax.set_xlim(0, 1000)
+        ax.set_ylim(0, 1200)
+        line, = ax.plot([], [], lw=2)
+
+        # for i in range(self.num_steps):
+        for i in tqdm.tqdm(range(self.num_steps)):
+            time.sleep(0.01) 
+            data = self.arduino.readline().decode('utf-8').strip()
+            if not data:
+                continue
+            data = float(data)
+            self.add_to_buffer(data, time.time())
+
+            x.append(i)
+            y.append(data)
+            # line.set_data(x, y)
+            line.set_xdata(x)
+            line.set_ydata(y)
+            plt.draw()
+            plt.pause(1e-17)
+            # data_points.append(data)
+        # try:
+        #     if self.arduino.in_waiting:
+        #         line = self.arduino.readline().decode("utf-8").strip()
+        #         signal = float(line)
+        #         timestamp = time.time()
+        #         self.add_to_buffer(signal, timestamp)
+        #         return signal, timestamp
+        #     return None
+        # except Exception as e:
+        #     print(f"Error reading from Arduino: {e}")
+        #     return None
 
     def __del__(self):
         """Clean up serial connection."""
         if hasattr(self, "serial"):
-            self.serial.close()
+            self.arduino.close()
 
-
-class SimulatedHeartbeatSensor(HeartbeatSensor):
-    """Generates synthetic heartbeat data for testing."""
-
-    def __init__(self):
-        self.SAMPLE_RATE = 100  # Hz
-        self.duration = 15  # 15 seconds
-        self.phase = 0  # Initialize phase
-        self.sampling_rate = self.SAMPLE_RATE  # Add sampling_rate attribute
-        super().__init__(self.SAMPLE_RATE)
-        self.current_bpm = 70.0  # Assuming a default base_bpm
-        self.signal_buffer = []
-        self.ibi_buffer = []
-        self.last_peak_time = None
-        self.buffer_size = self.SAMPLE_RATE * self.duration
-
-    def read_data(self):
-        # Generate time points
-        t = np.linspace(0, self.duration, int(self.duration * self.SAMPLE_RATE))
-        
-        # Base heart rate (beats per second)
-        heart_rate = 1.2  # ~72 BPM
-        
-        # Generate simulated heartbeat signal
-        signal = np.zeros_like(t)
-        for i in range(int(self.duration * heart_rate)):
-            beat_time = i / heart_rate
-            # Add a heartbeat pulse at each beat time
-            pulse = np.exp(-(t - beat_time)**2 * 30) * np.sin(2 * np.pi * 7 * (t - beat_time))
-            signal += pulse
             
-        # Add some noise
-        noise = np.random.normal(0, 0.1, len(t))
-        signal += noise
-        
-        return signal.tolist()
-
-    def read_signal(self) -> float:
-        """Generate synthetic heartbeat waveform."""
-        return self.read_data()  # Use our existing read_data method
-
-    def calculate_bpm(self) -> float:
-        """Simulate BPM fluctuations."""
-        # Add random walk to base_bpm
-        self.current_bpm += random.gauss(0, 0.1)
-
-        # Keep BPM in reasonable range
-        self.current_bpm = max(40, min(200, self.current_bpm))
-
-        return self.current_bpm
+class SimulatedHeartbeatSensor(HeartbeatSensor):   
+    def __init__(self, buffer_size: int = 1000):
+        super().__init__(buffer_size)
+        self.data, self.times = hp.load_exampledata(2)
+        self.length = len(self.data)
+        self.index = 0
+    
+    def read_signal(self) -> Tuple[np.str_, float] | None:
+        if self.index >= self.length:
+            return None
+        signal = self.data[self.index]
+        timestamp = self.times[self.index]
+        self.index += 1
+        self.add_to_buffer(signal, timestamp)
+        return signal, timestamp
 
 
 # Example usage
-if __name__ == "__main__":
-    try:
-        sensor = SimulatedHeartbeatSensor()
-        print("Using simulated sensor")
-        
-        while True:
-            signal = sensor.read_data()
-            signal_array = np.array(signal)
-            
-            try:
-                # First filter the signal
-                filtered = hp.filter_signal(signal_array, 
-                                         cutoff=[0.75, 3.5],
-                                         sample_rate=sensor.SAMPLE_RATE, 
-                                         order=2,
-                                         filtertype='bandpass')
-                
-                # Process with correct parameters
-                working_data, measures = hp.process(filtered, 
-                                                  sample_rate=sensor.SAMPLE_RATE,
-                                                  high_precision=True)
-                
-                # Convert peaklist to numpy array and check length
-                peaks = np.array(working_data['peaklist'])
-                
-                if len(peaks) >= 2:  # Need at least 2 peaks
-                    # Calculate RR intervals from peaks
-                    rr_intervals = np.diff(peaks) / sensor.SAMPLE_RATE * 1000
-                    
-                    # Remove negative and zero values
-                    rr_intervals = rr_intervals[rr_intervals > 0]
-                    
-                    # Remove outliers (RR intervals should typically be between 300-1200ms)
-                    rr_intervals = rr_intervals[(rr_intervals >= 300) & (rr_intervals <= 1200)]
-                    
-                    if len(rr_intervals) >= 2:
-                        # Calculate BPM
-                        bpm = 60000 / np.mean(rr_intervals)
-                        bpm = np.clip(bpm, 60, 100)
-                        
-                        # Get emotion
-                        emotion = sensor.analyze_hrv(rr_intervals)
-                        
-                        print(f"\rBPM: {bpm:.1f} | Emotion: {emotion} | RR Intervals: {len(rr_intervals)}", end='', flush=True)
-                    else:
-                        print("\rInsufficient valid RR intervals...", end='', flush=True)
-                else:
-                    print("\rCollecting data...", end='', flush=True)
-                
-            except Exception as e:
-                print(f"\rProcessing error: {str(e)}", end='', flush=True)
-                continue
-            
-            time.sleep(0.5)
-            
-    except KeyboardInterrupt:
-        print("\nStopping sensor reading...")
-    except Exception as e:
-        print(f"\nError: {str(e)}")
+# if __name__ == "__main__":
+#     # For Arduino sensor
+#     try:
+#         sensor = ArduinoHeartbeatSensor("/dev/ttyUSB0")  # Adjust port as needed
+#         print("Using Arduino sensor")
+#     except:
+#         # Fallback to simulation if Arduino not available
+#         sensor = SimulatedHeartbeatSensor()
+#         print("Using simulated sensor")
+
+#     try:
+#         while True:
+#             signal = sensor.read_signal()
+#             bpm = sensor.calculate_bpm()
+#             if bpm > 0:
+#                 print(f"Signal: {signal:.2f}, BPM: {bpm:.1f}")
+#             time.sleep(1.0 / sensor.sampling_rate)
+#     except KeyboardInterrupt:
+#         print("\nStopping sensor reading")

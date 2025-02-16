@@ -11,6 +11,11 @@ setup(
         'matplotlib>=3.6.2',
         'ipykernel>=6.23.1',
         'pygame>=2.6.1',
-        'openai>=1.12.0'
-    ]
+        'openai>=1.12.0',
+        'scipy>=1.10.0',
+        'python-dotenv>=1.0.1',
+        'heartpy>=1.2.7',
+        'tqdm>=4.67.1',
+        'requests>=2.32.3',
+    ],
 )

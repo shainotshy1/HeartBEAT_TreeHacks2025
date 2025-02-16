@@ -35,7 +35,7 @@ bpm_manager = BPM_Manager(bpm, metronome_sample=metronome_sample, beat_note=Note
 ######################
 
 # Generate Beat #
-num_bars = 3
+num_bars = 2
 layer_configs = []
 drum_layers = 2
 synth_layers = 1

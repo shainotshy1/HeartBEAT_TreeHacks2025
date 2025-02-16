@@ -2,8 +2,10 @@ from abc import ABC, abstractmethod
 
 import serial
 import time
+import pandas as pd
 import math
 import random
+from datetime import datetime
 from typing import List, Tuple, Dict
 import numpy as np
 import heartpy as hp
@@ -20,7 +22,10 @@ class HeartbeatSensor(ABC):
 
     @abstractmethod
     def read_signal(self) -> Tuple[np.str_, float] | None:
-        """Read and return the latest heartbeat signal and timestamp."""
+        """
+        Read and return the latest heartbeat signal and timestamp.
+        None means that we are done reading from the stream and can safely terminate.
+        """
         pass
     
     def process(self, signal=None, timestamps=None, timing=False):
@@ -40,6 +45,11 @@ class HeartbeatSensor(ABC):
         if len(self.signal_buffer) >= self.buffer_size:
             self.signal_buffer.pop(0)
         self.signal_buffer.append((signal, time))
+        
+    def get_measure(self, key):
+        if self.measures is None:
+            return None
+        return self.measures[key]
 
     def determine_emotion(self):
         """
@@ -47,13 +57,13 @@ class HeartbeatSensor(ABC):
         """
         if self.measures is None:
             return None
-        bpm = self.measures['bpm']
-        rmssd = self.measures['rmssd']
-        sdnn = self.measures['sdnn']
-        pnn50 = self.measures['pnn50']
-        sd1 = self.measures['sd1']
-        sd2 = self.measures['sd2']
-        breathing_rate = self.measures['breathingrate']
+        bpm = self.get_measure('bpm')
+        rmssd = self.get_measure('rmssd')
+        sdnn = self.get_measure('sdnn')
+        pnn50 = self.get_measure('pnn50')
+        sd1 = self.get_measure('sd1')
+        sd2 = self.get_measure('sd2')
+        breathing_rate = self.get_measure('breathingrate')
         
         # Normalize parameters based on individual baseline
         # (These should be collected during a neutral state)
@@ -122,7 +132,7 @@ class ArduinoHeartbeatSensor(HeartbeatSensor):
     """Reads real heartbeat data from an Arduino device."""
 
     def __init__(
-        self, serial_port: str, baud_rate: int = 115200, buffer_size: int = 1000, num_steps: int = 1000, warmup_steps: int = 1000
+        self, serial_port: str, baud_rate: int = 115200, buffer_size: int = 1000, num_steps: int = 1000, warmup_steps: int = 1000, show_plot: bool = False
     ):
         super().__init__(buffer_size)
         self.num_steps = num_steps
@@ -135,43 +145,53 @@ class ArduinoHeartbeatSensor(HeartbeatSensor):
         Read and parse serial data from Arduino.
         """
         # data_points = []
-        import tqdm
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        x = []
-        y = []
-        ax.set_xlim(0, 1000)
-        ax.set_ylim(0, 1200)
-        line, = ax.plot([], [], lw=2)
+        if self.show_plot:
+            import tqdm
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots()
+            x = []
+            y = []
+            ax.set_xlim(0, 1000)
+            ax.set_ylim(0, 1200)
+            line, = ax.plot([], [], lw=2)
 
-        # for i in range(self.num_steps):
-        for i in tqdm.tqdm(range(self.num_steps)):
-            time.sleep(0.01) 
-            data = self.arduino.readline().decode('utf-8').strip()
-            if not data:
-                continue
+            # for i in range(self.num_steps):
+        
+            for i in tqdm.tqdm(range(self.num_steps)):
+                time.sleep(0.01) 
+                data = self.arduino.readline().decode('utf-8').strip()
+                if not data:
+                    continue
+                data = float(data)
+                self.add_to_buffer(data, time.time())
+
+                x.append(i)
+                y.append(data)
+                # line.set_data(x, y)
+                line.set_xdata(x)
+                line.set_ydata(y)
+                plt.draw()
+                plt.pause(1e-17)
+                # data_points.append(data)
+            # try:
+            #     if self.arduino.in_waiting:
+            #         line = self.arduino.readline().decode("utf-8").strip()
+            #         signal = float(line)
+            #         timestamp = time.time()
+            #         self.add_to_buffer(signal, timestamp)
+            #         return signal, timestamp
+            #     return None
+            # except Exception as e:
+            #     print(f"Error reading from Arduino: {e}")
+            #     return None
+            
+        else:
+            assert self.num_steps == 1
+            data = None
+            while data is None:
+                data = self.arduino.readline().decode('utf-8').strip()
             data = float(data)
             self.add_to_buffer(data, time.time())
-
-            x.append(i)
-            y.append(data)
-            # line.set_data(x, y)
-            line.set_xdata(x)
-            line.set_ydata(y)
-            plt.draw()
-            plt.pause(1e-17)
-            # data_points.append(data)
-        # try:
-        #     if self.arduino.in_waiting:
-        #         line = self.arduino.readline().decode("utf-8").strip()
-        #         signal = float(line)
-        #         timestamp = time.time()
-        #         self.add_to_buffer(signal, timestamp)
-        #         return signal, timestamp
-        #     return None
-        # except Exception as e:
-        #     print(f"Error reading from Arduino: {e}")
-        #     return None
 
     def __del__(self):
         """Clean up serial connection."""
@@ -182,19 +202,31 @@ class ArduinoHeartbeatSensor(HeartbeatSensor):
 class SimulatedHeartbeatSensor(HeartbeatSensor):   
     def __init__(self, buffer_size: int = 1000):
         super().__init__(buffer_size)
-        self.data, self.times = hp.load_exampledata(2)
-        self.length = len(self.data)
+        data, times = hp.load_exampledata(2)
+        # for some reason this contains duplicates
+        df = pd.DataFrame({'signal': data, 'time': times})
+        df = df.drop_duplicates(subset="time", keep="first")
+        self.data = df['signal'].to_numpy()
+        self.times = df['time'].apply(_add_millis).to_numpy()
         self.index = 0
     
     def read_signal(self) -> Tuple[np.str_, float] | None:
-        if self.index >= self.length:
+        if self.index >= len(self):
             return None
         signal = self.data[self.index]
         timestamp = self.times[self.index]
         self.index += 1
         self.add_to_buffer(signal, timestamp)
         return signal, timestamp
+    
+    def __len__(self):
+        return len(self.data)
 
+
+def _add_millis(timestamp_str):
+    if '.' not in timestamp_str:
+        timestamp_str += '.000000'  # Add microseconds if missing
+    return timestamp_str
 
 # Example usage
 # if __name__ == "__main__":

@@ -1,7 +1,11 @@
 from enum import Enum
 import threading
 import pygame
+import subprocess
+from pydub import AudioSegment
+from pydub.playback import play
 from heartbeat.beat_construction.utils import keep_last_folders
+from heartbeat.recommender.recommender import query_groq, query_openai
 
 class Note(Enum):
     THIRTYSECOND = 1
@@ -48,7 +52,7 @@ class Sample():
     def empty_sample(length):
         return Sample(length, "<EMPTY>")
 
-class WavSample(Sample):
+class PygameWavSample(Sample):
     def __init__(self, length, label, wav_fn):
         super().__init__(length, label)
         self.wav_fn = wav_fn
@@ -62,6 +66,27 @@ class WavSample(Sample):
             if channel:
                 channel.play(self.sound)
         sound_thread = threading.Thread(target=helper)
+        sound_thread.start()
+
+class PydubWavSample(Sample):
+    def __init__(self, length, label, wav_fn):
+        super().__init__(length, label)
+        self.wav_fn = wav_fn
+        self.sound = AudioSegment.from_file(self.wav_fn)
+
+    def play(self):
+        def helper_with_logging():
+            play(self.sound)
+        
+        def helper_no_logging():
+            subprocess.run(
+                ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", self.wav_fn],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            
+        # sound_thread = threading.Thread(target=helper_with_logging, daemon=True)
+        sound_thread = threading.Thread(target=helper_no_logging, daemon=True)
         sound_thread.start()
 
 class BPM_Manager():
@@ -83,6 +108,8 @@ class BPM_Manager():
         self.children.append(child)
 
     def remove_child(self, child):
+        if child not in self.children:
+            return
         self.children.remove(child)
 
     def start(self):
@@ -223,7 +250,7 @@ class LayerConfig():
 import random
 # TODO: For future have time signature changes in a layer
 class BeatConstructor():
-    def build_beat(layer_configs, time_signature, num_bars, base_time):
+    def build_beat(layer_configs, time_signature, num_bars, base_time, emotion):
         assert type(num_bars) is int
         assert type(layer_configs) is list
         assert num_bars > 0
@@ -232,21 +259,22 @@ class BeatConstructor():
         layers = []
         layers_so_far = []
         for config in layer_configs:
-            layer = BeatConstructor.generate_layer(config, num_bars, base_time, time_signature, layers_so_far)
+            layer = BeatConstructor.generate_layer(config, num_bars, base_time, time_signature, layers_so_far, emotion)
             layers.append(layer)
             layers_so_far.append(str(layer))
         print(layers_so_far)
         return Beat(layers)
     
-    def generate_layer(config, num_bars, base_time, time_signature, layers_so_far):
+    def generate_layer(config, num_bars, base_time, time_signature, layers_so_far, emotion):
         bars = [BeatBar(time_signature, base_time) for _ in range(num_bars)]
         patterns_so_far = []
         samples_so_far = []
         for bar in bars:
-            pattern, pattern_name = BeatConstructor.pick_pattern(config, time_signature, num_bars, patterns_so_far, samples_so_far, layers_so_far)
+            (pattern, pattern_name), (sample, sample_name, sample_fn) = BeatConstructor.pick_pattern_and_sample_groq(config, time_signature, num_bars, patterns_so_far, samples_so_far, layers_so_far, emotion)
+            # pattern, pattern_name = BeatConstructor.pick_pattern(config, time_signature, num_bars, patterns_so_far, samples_so_far, layers_so_far, emotion)
             patterns_so_far.append(pattern_name)
-            sample, sample_name = BeatConstructor.pick_sample(config, time_signature, num_bars, patterns_so_far, samples_so_far, layers_so_far)
-            samples_so_far.append(sample_name)
+            # sample, sample_name = BeatConstructor.pick_sample(config, time_signature, num_bars, patterns_so_far, samples_so_far, layers_so_far, emotion)
+            samples_so_far.append(sample_fn)
             bar.load_pattern(pattern, sample, pattern_name, sample_name)
         layer = BeatLayer(bars)
         return layer
@@ -256,17 +284,36 @@ class BeatConstructor():
 ###########################
 
     # Temporary random
-    def pick_pattern(config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far):
+    def pick_pattern_random(config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far, emotion):
         pattern_name = random.choice(list(config.patterns.keys()))
         pattern = config.patterns[pattern_name]
         return pattern, pattern_name
 
     # Temporary random
-    def pick_sample(config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far):
+    def pick_sample_random(config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far, emotion):
+        raise NotImplementedError('tracks format updated')
         sample_fn = random.choice(config.tracks)
         sample_name = keep_last_folders(sample_fn[:-4])
-        sample = WavSample(Note.QUARTER, sample_name, sample_fn)
+        # sample = PygameWavSample(Note.QUARTER, sample_name, sample_fn)
+        sample = PydubWavSample(Note.QUARTER, sample_name, sample_fn)
         return sample, sample_name
+    
+    def pick_pattern_and_sample_groq(
+        config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far, emotion
+    ):
+        pattern_name, sample_fn = query_groq(
+            all_patterns=list(config.patterns.keys()),
+            all_tracks=config.tracks,
+            time_signature=time_signature,
+            curr_layer_patterns_so_far=curr_layer_patterns_so_far,
+            curr_layer_samples_so_far=curr_layer_samples_so_far,
+            prev_layers_so_far=prev_layers_so_far,
+            emotion=emotion
+        )
+        pattern = config.patterns[pattern_name]
+        sample_name = keep_last_folders(sample_fn[:-4])
+        sample = PydubWavSample(Note.QUARTER, sample_name, sample_fn)
+        return (pattern, pattern_name), (sample, sample_name, sample_fn)
     
 ############################
 ###########################

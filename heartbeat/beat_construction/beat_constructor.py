@@ -1,6 +1,7 @@
 from enum import Enum
 import threading
 import pygame
+from utils import keep_last_folders
 
 class Note(Enum):
     THIRTYSECOND = 1
@@ -205,13 +206,37 @@ class Beat(BPM_Child):
     def get_base_time(self):
         return self.base_time
 
-class BeatConstructor():
-    def __init__(self, library):
-        assert type(library) is SampleLibrary
-        self.library = library
+class LayerConfig():
+    def __init__(self, label, tracks, patterns):
+        self.label = label
+        self.tracks = tracks
+        self.patterns = patterns
 
-    def build_beat(self, layer_names, time_signature, num_bars):
-        # FOR PRESTON TO IMPLEMENT: Use BeatBar.set_count_sample()
+import random
+# TODO: For future have time signature changes in a layer
+class BeatConstructor():
+    def build_beat(layer_configs, time_signature, num_bars, base_time):
+        assert type(num_bars) is int
+        assert type(layer_configs) is list
+        assert num_bars > 0
+        assert len(layer_configs) > 0
+        assert all(isinstance(c, LayerConfig) for c in layer_configs)
         layers = []
+        for config in layer_configs:
+            layers.append(BeatConstructor.generate_layer(config, num_bars, base_time, time_signature))
         return Beat(layers)
     
+    def generate_layer(config, num_bars, base_time, time_signature):
+        bars = [BeatBar(time_signature, base_time) for _ in range(num_bars)]
+        for bar in bars:
+            pattern_name = random.choice(list(config.patterns.keys()))
+            pattern = config.patterns[pattern_name]
+            print(pattern_name)
+            print(pattern)
+            sample_fn = random.choice(config.tracks)
+            sample_name = keep_last_folders(sample_fn[:-4])
+            print(sample_name)
+            sample = WavSample(Note.QUARTER, sample_name, sample_fn)
+            bar.load_pattern(pattern, sample)
+        layer = BeatLayer(bars)
+        return layer

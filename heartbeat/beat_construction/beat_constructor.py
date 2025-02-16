@@ -135,6 +135,16 @@ class BeatBar(BPM_Child):
     def get_bar_arr(self):
         return self.bar
 
+    def load_pattern(self, arr, sample):
+        assert isinstance(sample, Sample)
+        assert type(arr) == list
+        assert len(arr) <= len(self.bar)
+        assert len(self.bar) % len(arr) == 0
+        interval = len(self.bar) // len(arr)
+        for i, elem in enumerate(arr):
+            if elem:
+                self.set_count_sample(i * interval, sample)
+
     def step(self):
         self.bar[self.curr].play()
         self.curr = self.curr + 1

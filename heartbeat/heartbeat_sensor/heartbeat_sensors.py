@@ -72,7 +72,7 @@ class ArduinoHeartbeatSensor(HeartbeatSensor):
         x = []
         y = []
         ax.set_xlim(0, 1000)
-        ax.set_ylim(0, 1200)
+        ax.set_ylim(600, 1200)
         line, = ax.plot([], [], lw=2)
 
         # for i in range(self.num_steps):

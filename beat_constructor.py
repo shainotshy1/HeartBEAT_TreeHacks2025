@@ -1,6 +1,6 @@
 from enum import Enum
-import time
-from playsound import playsound
+import threading
+import pygame
 
 class Note(Enum):
     THIRTYSECOND = 1
@@ -38,8 +38,8 @@ class Sample():
         self.label = label
 
     def play(self):
-        # Make play the audio and return after the length has completed
-        print(f"Playing {self.label}")
+        return
+        #print(f"Playing {self.label}")
 
     def empty_sample(length):
         return Sample(length, "<EMPTY>")
@@ -48,9 +48,17 @@ class WavSample(Sample):
     def __init__(self, length, label, wav_fn):
         super().__init__(length, label)
         self.wav_fn = wav_fn
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(buffer=256)
+        self.sound = pygame.mixer.Sound(self.wav_fn)
 
     def play(self):
-        playsound(self.wav_fn)
+        def helper():
+            channel = pygame.mixer.find_channel()
+            if channel:
+                channel.play(self.sound)
+        sound_thread = threading.Thread(target=helper)
+        sound_thread.start()
 
 class BPM_Manager():
     def __init__(self, bpm, metronome_sample = None, beat_note = Note.QUARTER, base_unit = Note.THIRTYSECOND):
@@ -59,6 +67,7 @@ class BPM_Manager():
         assert bpm > 0
         assert note_to_count[beat_note] <= note_to_count[base_unit]
         assert metronome_sample is None or isinstance(metronome_sample, Sample)
+        assert type(metronome_sample) is WavSample
         self.bpm = bpm
         self.metronome_sample = metronome_sample
         self.beat_note = beat_note
@@ -72,18 +81,29 @@ class BPM_Manager():
     def remove_child(self, child):
         self.children.remove(child)
 
-    def play(self):
+    def start(self):
+        self.running = True
+        self.tick()
+
+    def stop(self):
+        self.running = False
+
+    def tick(self):
         sample_interval = note_to_count[self.base_unit] / note_to_count[self.beat_note]
         total_beats = self.bpm * sample_interval
         beat_interval = 60 / total_beats
         curr = 0
-        while True:
+        def helper():
+            nonlocal curr
+            if not self.running:
+                return
             if self.metronome_sample is not None and curr == 0:
                 self.metronome_sample.play()
             curr = (curr + 1) % sample_interval
-            time.sleep(beat_interval)
             for child in self.children:
                 child.step()
+            threading.Timer(beat_interval, helper).start()
+        helper()
 
 class SampleLibrary():
     def __init__(self, samples):
@@ -92,7 +112,7 @@ class SampleLibrary():
             self.add_sample(s)
 
     def add_sample(self, sample):
-        assert type(sample) is Sample
+        assert isinstance(sample, Sample)
         self.samples.add(sample)
 
 class BeatBar(BPM_Child):
@@ -106,7 +126,7 @@ class BeatBar(BPM_Child):
     
     def set_count_sample(self, count, sample):
         assert 0 <= count < len(self.bar)
-        assert type(sample) is Sample
+        assert isinstance(sample, Sample)
         self.bar[count] = sample
 
     def get_bar_arr(self):

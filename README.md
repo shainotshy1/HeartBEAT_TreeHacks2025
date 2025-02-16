@@ -13,3 +13,8 @@ cd data
 wget https://www.hexawe.net/mess/200.Drum.Machines/drums.zip
 unzip drums.zip
 ```
+
+## Libraries
+```
+pip install pygame
+```

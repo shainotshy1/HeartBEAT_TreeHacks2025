@@ -28,7 +28,10 @@ class TimeSignature():
         self.b = b
 
 class BPM_Child():
-    def step():
+    def step(self):
+        raise NotImplemented
+    
+    def get_base_time(self):
         raise NotImplemented
 
 class Sample():
@@ -76,6 +79,7 @@ class BPM_Manager():
 
     def add_child(self, child):
         assert isinstance(child, BPM_Child)
+        assert child.get_base_time() == self.base_unit
         self.children.append(child)
 
     def remove_child(self, child):
@@ -139,6 +143,9 @@ class BeatBar(BPM_Child):
             self.curr = 0 # finished bar
             return True
         return False
+    
+    def get_base_time(self):
+        return self.base_time
 
     # How many 'unit's fit in one bar
     def get_total_time_units(self, unit):
@@ -154,7 +161,7 @@ class BeatLayer(BPM_Child):
         assert len(bars) > 0
         assert all(type(b) is BeatBar for b in bars)
         base_time = bars[0].base_time
-        assert all(b.base_time == base_time for b in bars)
+        assert all(b.get_base_time() == base_time for b in bars)
         self.bars = bars
         self.curr = 0
         self.base_time = base_time
@@ -167,13 +174,16 @@ class BeatLayer(BPM_Child):
     def get_total_time_units(self, unit):
         return sum(b.get_total_time_units(unit) for b in self.bars)
     
+    def get_base_time(self):
+        return self.base_time
+    
 class Beat(BPM_Child):
     def __init__(self, layers):
         assert type(layers) is list
         assert len(layers) > 0
         assert all(type(l) is BeatLayer for l in layers)
         base_time = layers[0].base_time
-        assert all(l.base_time == base_time for l in layers)
+        assert all(l.get_base_time() == base_time for l in layers)
         total_time = layers[0].get_total_time_units(base_time)
         assert all(l.get_total_time_units(base_time) == total_time for l in layers)
         self.layers = layers
@@ -182,6 +192,9 @@ class Beat(BPM_Child):
     def step(self):
         for layer in self.layers:
             layer.step()
+
+    def get_base_time(self):
+        return self.base_time
 
 class BeatConstructor():
     def __init__(self, library):

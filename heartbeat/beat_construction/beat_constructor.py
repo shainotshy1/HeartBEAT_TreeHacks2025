@@ -94,10 +94,10 @@ class BPM_Manager():
 
     def tick(self):
         sample_interval = note_to_count[self.base_unit] / note_to_count[self.beat_note]
-        total_beats = self.bpm * sample_interval
-        beat_interval = 60 / total_beats
         curr = 0
         def helper():
+            total_beats = self.bpm * sample_interval
+            beat_interval = 60 / total_beats
             nonlocal curr
             if not self.running:
                 return

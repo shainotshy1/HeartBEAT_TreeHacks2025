@@ -1,6 +1,6 @@
 from enum import Enum
-import time
-from playsound import playsound
+import threading
+import pygame
 
 class Note(Enum):
     THIRTYSECOND = 1
@@ -28,7 +28,10 @@ class TimeSignature():
         self.b = b
 
 class BPM_Child():
-    def step():
+    def step(self):
+        raise NotImplemented
+    
+    def get_base_time(self):
         raise NotImplemented
 
 class Sample():
@@ -38,8 +41,8 @@ class Sample():
         self.label = label
 
     def play(self):
-        # Make play the audio and return after the length has completed
-        print(f"Playing {self.label}")
+        return
+        #print(f"Playing {self.label}")
 
     def empty_sample(length):
         return Sample(length, "<EMPTY>")
@@ -48,9 +51,17 @@ class WavSample(Sample):
     def __init__(self, length, label, wav_fn):
         super().__init__(length, label)
         self.wav_fn = wav_fn
+        if not pygame.mixer.get_init():
+            pygame.mixer.init(buffer=256)
+        self.sound = pygame.mixer.Sound(self.wav_fn)
 
     def play(self):
-        playsound(self.wav_fn)
+        def helper():
+            channel = pygame.mixer.find_channel()
+            if channel:
+                channel.play(self.sound)
+        sound_thread = threading.Thread(target=helper)
+        sound_thread.start()
 
 class BPM_Manager():
     def __init__(self, bpm, metronome_sample = None, beat_note = Note.QUARTER, base_unit = Note.THIRTYSECOND):
@@ -67,23 +78,35 @@ class BPM_Manager():
 
     def add_child(self, child):
         assert isinstance(child, BPM_Child)
+        assert child.get_base_time() == self.base_unit
         self.children.append(child)
 
     def remove_child(self, child):
         self.children.remove(child)
 
-    def play(self):
+    def start(self):
+        self.running = True
+        self.tick()
+
+    def stop(self):
+        self.running = False
+
+    def tick(self):
         sample_interval = note_to_count[self.base_unit] / note_to_count[self.beat_note]
         total_beats = self.bpm * sample_interval
         beat_interval = 60 / total_beats
         curr = 0
-        while True:
+        def helper():
+            nonlocal curr
+            if not self.running:
+                return
             if self.metronome_sample is not None and curr == 0:
                 self.metronome_sample.play()
             curr = (curr + 1) % sample_interval
-            time.sleep(beat_interval)
             for child in self.children:
                 child.step()
+            threading.Timer(beat_interval, helper).start()
+        helper()
 
 class SampleLibrary():
     def __init__(self, samples):
@@ -92,7 +115,7 @@ class SampleLibrary():
             self.add_sample(s)
 
     def add_sample(self, sample):
-        assert type(sample) is Sample
+        assert isinstance(sample, Sample)
         self.samples.add(sample)
 
 class BeatBar(BPM_Child):
@@ -106,11 +129,21 @@ class BeatBar(BPM_Child):
     
     def set_count_sample(self, count, sample):
         assert 0 <= count < len(self.bar)
-        assert type(sample) is Sample
+        assert isinstance(sample, Sample)
         self.bar[count] = sample
 
     def get_bar_arr(self):
         return self.bar
+
+    def load_pattern(self, arr, sample):
+        assert isinstance(sample, Sample)
+        assert type(arr) == list
+        assert len(arr) <= len(self.bar)
+        assert len(self.bar) % len(arr) == 0
+        interval = len(self.bar) // len(arr)
+        for i, elem in enumerate(arr):
+            if elem:
+                self.set_count_sample(i * interval, sample)
 
     def step(self):
         self.bar[self.curr].play()
@@ -119,6 +152,9 @@ class BeatBar(BPM_Child):
             self.curr = 0 # finished bar
             return True
         return False
+    
+    def get_base_time(self):
+        return self.base_time
 
     # How many 'unit's fit in one bar
     def get_total_time_units(self, unit):
@@ -134,7 +170,7 @@ class BeatLayer(BPM_Child):
         assert len(bars) > 0
         assert all(type(b) is BeatBar for b in bars)
         base_time = bars[0].base_time
-        assert all(b.base_time == base_time for b in bars)
+        assert all(b.get_base_time() == base_time for b in bars)
         self.bars = bars
         self.curr = 0
         self.base_time = base_time
@@ -147,13 +183,16 @@ class BeatLayer(BPM_Child):
     def get_total_time_units(self, unit):
         return sum(b.get_total_time_units(unit) for b in self.bars)
     
+    def get_base_time(self):
+        return self.base_time
+    
 class Beat(BPM_Child):
     def __init__(self, layers):
         assert type(layers) is list
         assert len(layers) > 0
         assert all(type(l) is BeatLayer for l in layers)
         base_time = layers[0].base_time
-        assert all(l.base_time == base_time for l in layers)
+        assert all(l.get_base_time() == base_time for l in layers)
         total_time = layers[0].get_total_time_units(base_time)
         assert all(l.get_total_time_units(base_time) == total_time for l in layers)
         self.layers = layers
@@ -162,6 +201,9 @@ class Beat(BPM_Child):
     def step(self):
         for layer in self.layers:
             layer.step()
+
+    def get_base_time(self):
+        return self.base_time
 
 class BeatConstructor():
     def __init__(self, library):

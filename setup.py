@@ -10,5 +10,6 @@ setup(
         'pandas>=1.5.2',
         'matplotlib>=3.6.2',
         'ipykernel>=6.23.1',
+        'pygame>=2.6.1'
     ],
 )

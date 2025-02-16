@@ -121,12 +121,13 @@ class SampleLibrary():
 
 class BeatBar(BPM_Child):
     # Example: 6/8 with base_time 1/16 => bar = [len = 6 * 16 / 8] = [12 sixteenth notes per bar]
-    def __init__(self, time_signature, base_time):
+    def __init__(self, time_signature, base_time, name="Custom Beat"):
         self.base_time = base_time
         self.time_signature = time_signature
         self.curr = 0
         n = self.get_total_time_units(base_time)
         self.bar = [Sample.empty_sample(base_time) for _ in range(n)]
+        self.name = name
     
     def set_count_sample(self, count, sample):
         assert 0 <= count < len(self.bar)
@@ -136,11 +137,12 @@ class BeatBar(BPM_Child):
     def get_bar_arr(self):
         return self.bar
 
-    def load_pattern(self, arr, sample):
+    def load_pattern(self, arr, sample, pattern_name, sample_name):
         assert isinstance(sample, Sample)
         assert type(arr) == list
         assert len(arr) <= len(self.bar)
         assert len(self.bar) % len(arr) == 0
+        self.name = f"(Pattern: {pattern_name}, Sample: {sample_name})"
         interval = len(self.bar) // len(arr)
         for i, elem in enumerate(arr):
             if elem:
@@ -164,6 +166,9 @@ class BeatBar(BPM_Child):
         count = note_to_count[unit]
         assert count >= b
         return a * count // b
+    
+    def __str__(self):
+        return self.name
 
 class BeatLayer(BPM_Child):
     def __init__(self, bars):
@@ -186,6 +191,9 @@ class BeatLayer(BPM_Child):
     
     def get_base_time(self):
         return self.base_time
+    
+    def __str__(self):
+        return '{' + ' => '.join([str(b) for b in self.bars]) + '}'
     
 class Beat(BPM_Child):
     def __init__(self, layers):
@@ -222,21 +230,44 @@ class BeatConstructor():
         assert len(layer_configs) > 0
         assert all(isinstance(c, LayerConfig) for c in layer_configs)
         layers = []
+        layers_so_far = []
         for config in layer_configs:
-            layers.append(BeatConstructor.generate_layer(config, num_bars, base_time, time_signature))
+            layer = BeatConstructor.generate_layer(config, num_bars, base_time, time_signature, layers_so_far)
+            layers.append(layer)
+            layers_so_far.append(str(layer))
+        print(layers_so_far)
         return Beat(layers)
     
-    def generate_layer(config, num_bars, base_time, time_signature):
+    def generate_layer(config, num_bars, base_time, time_signature, layers_so_far):
         bars = [BeatBar(time_signature, base_time) for _ in range(num_bars)]
+        patterns_so_far = []
+        samples_so_far = []
         for bar in bars:
-            pattern_name = random.choice(list(config.patterns.keys()))
-            pattern = config.patterns[pattern_name]
-            print(pattern_name)
-            print(pattern)
-            sample_fn = random.choice(config.tracks)
-            sample_name = keep_last_folders(sample_fn[:-4])
-            print(sample_name)
-            sample = WavSample(Note.QUARTER, sample_name, sample_fn)
-            bar.load_pattern(pattern, sample)
+            pattern, pattern_name = BeatConstructor.pick_pattern(config, time_signature, num_bars, patterns_so_far, samples_so_far, layers_so_far)
+            patterns_so_far.append(pattern_name)
+            sample, sample_name = BeatConstructor.pick_sample(config, time_signature, num_bars, patterns_so_far, samples_so_far, layers_so_far)
+            samples_so_far.append(sample_name)
+            bar.load_pattern(pattern, sample, pattern_name, sample_name)
         layer = BeatLayer(bars)
         return layer
+
+###########################
+##### IMPLEMENT BELOW #####
+###########################
+
+    # Temporary random
+    def pick_pattern(config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far):
+        pattern_name = random.choice(list(config.patterns.keys()))
+        pattern = config.patterns[pattern_name]
+        return pattern, pattern_name
+
+    # Temporary random
+    def pick_sample(config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far):
+        sample_fn = random.choice(config.tracks)
+        sample_name = keep_last_folders(sample_fn[:-4])
+        sample = WavSample(Note.QUARTER, sample_name, sample_fn)
+        return sample, sample_name
+    
+############################
+###########################
+###########################

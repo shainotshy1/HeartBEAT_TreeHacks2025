@@ -5,7 +5,7 @@ import subprocess
 from pydub import AudioSegment
 from pydub.playback import play
 from heartbeat.beat_construction.utils import keep_last_folders
-from heartbeat.recommender.recommender import query_groq, query_openai
+from heartbeat.recommender.recommender import query_groq, query_openai, query_hf
 
 class Note(Enum):
     THIRTYSECOND = 1

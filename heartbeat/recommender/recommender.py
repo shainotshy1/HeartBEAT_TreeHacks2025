@@ -296,28 +296,4 @@ def query_hf(
     return pattern, track
 
 if __name__ == "__main__":
-    # Test all three model implementations
-    patterns, synth_patterns = get_patterns()
-    track_groups = get_track_groups()
-    random_emotion = np.random.choice(all_emotion_str)
-    print(f'Emotion: {random_emotion}')
-    
-    # Test each model
-    for query_func in [query_openai, query_groq, query_hf]:
-        print(f"\nTesting {query_func.__name__}:")
-        try:
-            pattern, track = query_func(
-                all_patterns=patterns,
-                all_tracks=track_groups,
-                time_signature=None,
-                curr_layer_patterns_so_far=[],
-                curr_layer_samples_so_far=[],
-                prev_layers_so_far=[],
-                emotion=random_emotion,
-                verbose=True
-            )
-            print(f"Results from {query_func.__name__}:")
-            print(f"Pattern: {pattern}")
-            print(f"Track: {track}")
-        except Exception as e:
-            print(f"Error running {query_func.__name__}: {str(e)}")
+    raise NotImplemented

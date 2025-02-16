@@ -70,7 +70,6 @@ class BPM_Manager():
         assert bpm > 0
         assert note_to_count[beat_note] <= note_to_count[base_unit]
         assert metronome_sample is None or isinstance(metronome_sample, Sample)
-        assert type(metronome_sample) is WavSample
         self.bpm = bpm
         self.metronome_sample = metronome_sample
         self.beat_note = beat_note

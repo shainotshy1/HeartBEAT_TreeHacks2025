@@ -89,7 +89,7 @@ def get_track_prompt(
     return f"Given that the emotion is {emotion}, and that we used the following recent tracks: [{recent_tracks}], and that the following progress towards track layers has already been done: [{prev_layers_so_far}], guess the best-matching drum sample out of the following list. {get_expected_format_prompt()} \n{tracks_concat_str}"
 
 
-def query_openai(emotion: str, 
+def query_openai_old(emotion: str, 
                  time_signature,
                  curr_layer_patterns_so_far: List[str],
                  curr_layer_samples_so_far: List[str],
@@ -152,6 +152,64 @@ def query_openai(emotion: str,
         'track_group': track_group,
         'sample_filename': sample_filename
     }
+    
+
+def query_openai(
+    all_patterns: List[str],
+    all_tracks: Dict[str, List[str]],
+    time_signature,  # unused
+    curr_layer_patterns_so_far: List[str],
+    curr_layer_samples_so_far: List[str],
+    prev_layers_so_far,  # unused
+    emotion: str,
+    verbose=True
+):
+    """
+    Emotion -> pattern, sample
+    Each query takes ~0.6 seconds
+    """
+    if groq_api_key is None:
+        raise ValueError("GROQ_API_KEY environment variable not set")
+        
+    def sample_openai(system_prompt, user_prompt):
+        system_prompt = {"role": "system", "content": system_prompt}
+        user_prompt = {"role": "user", "content": user_prompt}        
+        completion = openai_client.chat.completions.create(
+            model="gpt-4o-mini", store=True, messages=[system_prompt, user_prompt], temperature=temperature
+        )
+        completion = completion.choices[0].message.content
+        return completion
+    
+    extract_answer = lambda content: content.split('\n')[-1]
+    
+    system_prompt = get_system_prompt()
+    pattern_prompt = get_pattern_prompt(emotion, all_patterns, curr_layer_patterns_so_far, prev_layers_so_far)
+    track_prompt = get_track_prompt(emotion, all_tracks, curr_layer_samples_so_far, prev_layers_so_far)
+    
+    t0 = time.time()
+    pattern_completion = sample_openai(system_prompt, pattern_prompt)
+
+    pattern = extract_answer(pattern_completion)
+    t1 = time.time()
+    if verbose:
+        print('Pattern prompt:', pattern_prompt)
+        print()
+        print('Pattern response:', pattern_completion)
+        print('Time (s):', t1 - t0)
+        print()
+    
+    t0 = time.time()
+    track_completion = sample_openai(system_prompt, track_prompt)
+    track = extract_answer(track_completion)
+    t1 = time.time()
+    if verbose:
+        print('Sample prompt:', track_prompt)
+        print()
+        print('Sample response:', track_completion)
+        print('Time (s):', t1 - t0)
+        print()
+        
+    return pattern, track
 
 
 def query_groq(

@@ -301,7 +301,8 @@ class BeatConstructor():
     def pick_pattern_and_sample_groq(
         config, time_signature, num_bars, curr_layer_patterns_so_far, curr_layer_samples_so_far, prev_layers_so_far, emotion
     ):
-        pattern_name, sample_fn = query_groq(
+        query_fn = query_openai
+        pattern_name, sample_fn = query_fn(
             all_patterns=list(config.patterns.keys()),
             all_tracks=config.tracks,
             time_signature=time_signature,

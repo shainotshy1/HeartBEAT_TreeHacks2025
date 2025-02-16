@@ -31,14 +31,14 @@ async def main_loop(config: MusicConfig, sensor: HeartbeatSensor, debug: bool = 
     drum_patterns = pd.read_csv("heartbeat/beat_construction/drum_patterns.csv").to_dict(orient='records')
     drum_patterns = {item['label']: eval(item['pattern']) for item in drum_patterns}
     drum_tracks = list_files_in_directory('data/drums', '.wav')
-    # synth_patterns = pd.read_csv("heartbeat/beat_construction/synth_patterns.csv").to_dict(orient='records')
-    # synth_patterns = {item['label']: eval(item['pattern']) for item in synth_patterns}
-    # synth_tracks = list_files_in_directory('data/synths', '.wav')
+    synth_patterns = pd.read_csv("heartbeat/beat_construction/synth_patterns.csv").to_dict(orient='records')
+    synth_patterns = {item['label']: eval(item['pattern']) for item in synth_patterns}
+    synth_tracks = list_files_in_directory('data/synths', '.wav')
     layer_configs = []
     for _ in range(config.drum_layers):
         layer_configs.append(LayerConfig("drums", drum_tracks, drum_patterns))
-    # for _ in range(synth_layers):
-    #     layer_configs.append(LayerConfig("drums", synth_tracks, synth_patterns))
+    for _ in range(config.synth_layers):
+        layer_configs.append(LayerConfig("drums", synth_tracks, synth_patterns))
 
     signal_processor = SignalProcessor()
     
@@ -101,7 +101,7 @@ def generate_synthetic(debug=False):
         base_unit=Note.SIXTEENTH,
         bpm=120,
         num_bars=2,
-        drum_layers=2,
+        drum_layers=3,
         synth_layers=1,
         emotion_run_length=1,
         sensor_buffer_size=1000,

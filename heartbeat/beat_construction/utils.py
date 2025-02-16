@@ -16,7 +16,6 @@ def list_files_in_directory(directory, ext=None):
                 file_list.append(full_path)
             elif os.path.splitext(full_path)[1] == ext:
                 file_list.append(full_path)
-    
     return file_list
 
 

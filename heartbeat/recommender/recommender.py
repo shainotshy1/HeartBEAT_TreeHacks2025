@@ -7,6 +7,8 @@ import json
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict
+import requests
+from requests.exceptions import HTTPError
 
 from heartbeat.heartbeat_sensor.emotion import all_emotion_str
 
@@ -27,6 +29,8 @@ groq_api_headers = {
 temperature = 0.2
 
 def sample_list(l: List, n: int = 20):
+    if len(l) <= n:
+        return l
     idx = np.random.choice(len(l), n, replace=False)
     return [l[i] for i in idx]
 
@@ -55,7 +59,7 @@ def get_samples_filenames(samples_data: pd.DataFrame,
     return sample_list(sample_filenames, max_samples)
 
 def get_expected_format_prompt():
-    return 'You may think briefly to come to a conclusion (no more than one sentence); we are just looking for an educated guess. Put your final answer on a new line at the end of your response, directly copied from the input.'
+    return 'You may think briefly to come to a conclusion (no more than one sentence); we are just looking for an educated guess. Put your final answer on a new line at the end of your response, directly copied from the input. You must minimize repitition while ensuring continuity in the style of the beat. Patterns on the current layer should differ from tracks on previous layers.'
 
 def get_system_prompt():
     return "You are an expert beat producer, and are very good at guessing beat patterns and samples based on emotions and filenames."
@@ -63,24 +67,26 @@ def get_system_prompt():
 def get_pattern_prompt(
     emotion: str, 
     all_patterns: List[str],
-    curr_layer_patterns_so_far: List[str]
+    curr_layer_patterns_so_far: List[str],
+    prev_layers_so_far: List[str]
 ):
     all_patterns = sample_list(all_patterns)
-    recent_patterns = curr_layer_patterns_so_far[-5:]
-    patterns = [*all_patterns, *recent_patterns]
-    patterns_concat_str = ', '.join(patterns)
-    return f"Given that the emotion is {emotion}, guess the best-matching drum pattern out of the following list. {get_expected_format_prompt()} \n{patterns_concat_str}"
+    recent_patterns = curr_layer_patterns_so_far#[-5:]
+    #patterns = [*all_patterns, *recent_patterns]
+    patterns_concat_str = ', '.join(all_patterns)
+    return f"Given that the emotion is {emotion}, and that we used the following recent patterns: [{recent_patterns}], and that the following progress towards track layers has already been done: [{prev_layers_so_far}], guess the best-matching drum pattern out of the following list. {get_expected_format_prompt()} \n{patterns_concat_str}"
 
 def get_track_prompt(
     emotion: str, 
     all_tracks: List[str],
     curr_layer_samples_so_far: List[str],
+    prev_layers_so_far: List[str]
 ):
     all_tracks = sample_list(all_tracks)
-    recent_tracks = curr_layer_samples_so_far[-5:]
-    tracks = [*all_tracks, *recent_tracks]
-    tracks_concat_str = '\n'.join(tracks)
-    return f"Given that the emotion is {emotion}, guess the best-matching drum sample out of the following list. {get_expected_format_prompt()} \n{tracks_concat_str}"
+    recent_tracks = curr_layer_samples_so_far#[-5:]
+    #tracks = [*all_tracks, *recent_tracks]
+    tracks_concat_str = '\n'.join(all_tracks)
+    return f"Given that the emotion is {emotion}, and that we used the following recent tracks: [{recent_tracks}], and that the following progress towards track layers has already been done: [{prev_layers_so_far}], guess the best-matching drum sample out of the following list. {get_expected_format_prompt()} \n{tracks_concat_str}"
 
 
 def query_openai(emotion: str, 
@@ -175,18 +181,31 @@ def query_groq(
             "temperature": temperature,
         }
         
-        response = requests.post(groq_api_url, headers=groq_api_headers, data=json.dumps(data))
-        response.raise_for_status()
+        max_tries = 5
+        for i in range(max_tries):
+            try:
+                response = requests.post(groq_api_url, headers=groq_api_headers, data=json.dumps(data))
+                response.raise_for_status()
+                break
+            except HTTPError as http_err:
+                if response.status_code != 429:
+                    print(http_err)
+                    exit(-1)
+        if response.status_code == 429:
+            print(response)
+            exit(-1)
+            
         return response.json()['choices'][0]['message']['content']
     
     extract_answer = lambda content: content.split('\n')[-1]
     
     system_prompt = get_system_prompt()
-    pattern_prompt = get_pattern_prompt(emotion, all_patterns, curr_layer_patterns_so_far)
-    track_prompt = get_track_prompt(emotion, all_tracks, curr_layer_samples_so_far)
+    pattern_prompt = get_pattern_prompt(emotion, all_patterns, curr_layer_patterns_so_far, prev_layers_so_far)
+    track_prompt = get_track_prompt(emotion, all_tracks, curr_layer_samples_so_far, prev_layers_so_far)
     
     t0 = time.time()
     pattern_completion = sample_groq(system_prompt, pattern_prompt)
+
     pattern = extract_answer(pattern_completion)
     t1 = time.time()
     if verbose:

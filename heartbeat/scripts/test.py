@@ -1,4 +1,4 @@
-from heartbeat.beat_construction.beat_constructor import Note, LayerConfig, BPM_Manager, BeatConstructor, TimeSignature, WavSample
+from heartbeat.beat_construction.beat_constructor import Note, LayerConfig, BPM_Manager, BeatConstructor, TimeSignature, PygameWavSample
 import pandas as pd
 from heartbeat.beat_construction.utils import list_files_in_directory
 
@@ -43,7 +43,7 @@ for _ in range(drum_layers):
     layer_configs.append(LayerConfig("drums", drum_tracks, drum_patterns))
 for _ in range(synth_layers):
     layer_configs.append(LayerConfig("drums", synth_tracks, synth_patterns))
-beat = BeatConstructor.build_beat(layer_configs, time_signature, num_bars, base_unit)
+beat = BeatConstructor.build_beat(layer_configs, time_signature, num_bars, base_unit, "happy")
 bpm_manager.add_child(beat)
 #################
 

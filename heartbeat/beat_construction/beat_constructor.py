@@ -310,6 +310,14 @@ class BeatConstructor():
             prev_layers_so_far=prev_layers_so_far,
             emotion=emotion
         )
+        for fn in config.tracks:
+            if sample_fn in fn:
+                break
+        sample_fn = fn
+        for fn in config.patterns.keys():
+            if pattern_name in fn:
+                break
+        pattern_name = fn
         pattern = config.patterns[pattern_name]
         sample_name = keep_last_folders(sample_fn[:-4])
         sample = PydubWavSample(Note.QUARTER, sample_name, sample_fn)

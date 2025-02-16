@@ -53,7 +53,7 @@ class WavSample(Sample):
         super().__init__(length, label)
         self.wav_fn = wav_fn
         if not pygame.mixer.get_init():
-            pygame.mixer.init(buffer=256)
+            pygame.mixer.init(buffer=2048)
         self.sound = pygame.mixer.Sound(self.wav_fn)
 
     def play(self):

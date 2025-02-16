@@ -53,33 +53,61 @@ class ArduinoHeartbeatSensor(HeartbeatSensor):
     """Reads real heartbeat data from an Arduino device."""
 
     def __init__(
-        self, serial_port: str, baud_rate: int = 115200, buffer_size: int = 1000
+        self, serial_port: str, baud_rate: int = 115200, buffer_size: int = 1000, num_steps: int = 1000, warmup_steps: int = 1000
     ):
         super().__init__(buffer_size)
+        self.num_steps = num_steps
         self.serial_port = serial_port
-        self.serial = serial.Serial(serial_port, baud_rate)
+        self.arduino = serial.Serial(serial_port, baud_rate, timeout=1)
         time.sleep(2)  # Wait for Arduino to reset
 
     def read_signal(self) -> Tuple[np.str_, float] | None:
         """
         Read and parse serial data from Arduino.
         """
-        try:
-            if self.serial.in_waiting:
-                line = self.serial.readline().decode("utf-8").strip()
-                signal = float(line)
-                timestamp = time.time()
-                self.add_to_buffer(signal, timestamp)
-                return signal, timestamp
-            return None
-        except Exception as e:
-            print(f"Error reading from Arduino: {e}")
-            return None
+        # data_points = []
+        import tqdm
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        x = []
+        y = []
+        ax.set_xlim(0, 1000)
+        ax.set_ylim(0, 1200)
+        line, = ax.plot([], [], lw=2)
+
+        # for i in range(self.num_steps):
+        for i in tqdm.tqdm(range(self.num_steps)):
+            time.sleep(0.01) 
+            data = self.arduino.readline().decode('utf-8').strip()
+            if not data:
+                continue
+            data = float(data)
+            self.add_to_buffer(data, time.time())
+
+            x.append(i)
+            y.append(data)
+            # line.set_data(x, y)
+            line.set_xdata(x)
+            line.set_ydata(y)
+            plt.draw()
+            plt.pause(1e-17)
+            # data_points.append(data)
+        # try:
+        #     if self.arduino.in_waiting:
+        #         line = self.arduino.readline().decode("utf-8").strip()
+        #         signal = float(line)
+        #         timestamp = time.time()
+        #         self.add_to_buffer(signal, timestamp)
+        #         return signal, timestamp
+        #     return None
+        # except Exception as e:
+        #     print(f"Error reading from Arduino: {e}")
+        #     return None
 
     def __del__(self):
         """Clean up serial connection."""
         if hasattr(self, "serial"):
-            self.serial.close()
+            self.arduino.close()
 
             
 class SimulatedHeartbeatSensor(HeartbeatSensor):   
@@ -97,25 +125,3 @@ class SimulatedHeartbeatSensor(HeartbeatSensor):
         self.index += 1
         self.add_to_buffer(signal, timestamp)
         return signal, timestamp
-
-
-# Example usage
-# if __name__ == "__main__":
-#     # For Arduino sensor
-#     try:
-#         sensor = ArduinoHeartbeatSensor("/dev/ttyUSB0")  # Adjust port as needed
-#         print("Using Arduino sensor")
-#     except:
-#         # Fallback to simulation if Arduino not available
-#         sensor = SimulatedHeartbeatSensor()
-#         print("Using simulated sensor")
-
-#     try:
-#         while True:
-#             signal = sensor.read_signal()
-#             bpm = sensor.calculate_bpm()
-#             if bpm > 0:
-#                 print(f"Signal: {signal:.2f}, BPM: {bpm:.1f}")
-#             time.sleep(1.0 / sensor.sampling_rate)
-#     except KeyboardInterrupt:
-#         print("\nStopping sensor reading")

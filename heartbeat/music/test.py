@@ -26,8 +26,8 @@ _display_surf = pygame.display.set_mode(size, pygame.HWSURFACE | pygame.DOUBLEBU
 
 notes = []
 
-# from heartbeat.heartbeat_sensor.heartbeat_sensors import ArduinoHeartbeatSensor
-# hs = ArduinoHeartbeatSensor(serial_port='/dev/cu.usbmodem1201', baud_rate=9600)
+from heartbeat.heartbeat_sensor.heartbeat_sensors import ArduinoHeartbeatSensor
+hs = ArduinoHeartbeatSensor(serial_port='/dev/cu.usbmodem1201', baud_rate=9600)
 
 import time
 time.sleep(1) 
